@@ -12,7 +12,7 @@ from google import genai
 from google.genai import types
 
 # ==============================================================================
-# 1. CONFIGURACIÓN INTERNA Y ESTILO VISUAL (SEGURA PARA LA NUBE)
+# 1. CONFIGURACIÓN INTERNA Y ESTILO VISUAL
 # ==============================================================================
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
@@ -26,7 +26,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Emblema SVG del Quetzal (Ave Nacional de Guatemala)
 ICONO_QUETZAL_SVG = '<svg width="48" height="48" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="30" fill="#ECFDF5" stroke="#059669" stroke-width="2.5"/><path d="M26 39C20 47 16 54 14 59C19 55 24 49 29 41" fill="#047857"/><path d="M31 40C27 49 24 56 23 61C27 56 31 50 34 41" fill="#10B981"/><path d="M23 33C22 24 27 16 35 16C41 16 44 21 43 28C42 35 36 41 28 41C25 41 23 37 23 33Z" fill="#059669"/><path d="M34 25C39 25 42 29 41 34C39 39 34 41 30 40C32 36 33 30 34 25Z" fill="#DC2626"/><path d="M30 16C31 11 35 9 38 11C36 12 35 14 36 16" stroke="#047857" stroke-width="2.5" stroke-linecap="round"/><path d="M33 15C35 10 39 9 41 12" stroke="#10B981" stroke-width="2" stroke-linecap="round"/><path d="M25 27C28 24 33 25 34 30C32 34 27 35 25 32Z" fill="#047857"/><path d="M42 19L48 21L42 23Z" fill="#F59E0B"/><circle cx="39" cy="19.5" r="1.6" fill="#FFFFFF"/><circle cx="39.3" cy="19.5" r="0.8" fill="#111827"/></svg>'
 
 st.markdown("""
@@ -54,11 +53,76 @@ st.markdown("""
 .brand-sub {
     font-size: 0.82rem; color: #475569; margin-top: 2px;
 }
+.login-card {
+    background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px;
+    padding: 2.2rem; max-width: 480px; margin: 2rem auto; text-align: center;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.06);
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. CATÁLOGO CURRICULAR (PREPRIMARIA A DIVERSIFICADO)
+# 2. CONTROL DE SESIÓN (GOOGLE LOGIN + MODO DOCENTE INVITADO)
+# ==============================================================================
+def google_auth_configurado():
+    try:
+        return "auth" in st.secrets and "google" in st.secrets["auth"]
+    except Exception:
+        return False
+
+if "docente_invitado" not in st.session_state:
+    st.session_state.docente_invitado = ""
+
+usuario_google_activo = False
+try:
+    if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+        usuario_google_activo = True
+except Exception:
+    usuario_google_activo = False
+
+# Pantalla de bienvenida e inicio de sesión si aún no se identifica
+if not usuario_google_activo and not st.session_state.docente_invitado:
+    st.markdown(f"""
+    <div class="login-card">
+        <div style="display:flex; justify-content:center; margin-bottom:12px;">{ICONO_QUETZAL_SVG}</div>
+        <h2 style="color:#065f46; margin-bottom:4px;">Bienvenido a PROFE IA</h2>
+        <p style="color:#475569; font-size:0.95rem; margin-bottom:1.5rem;">
+            Tu asistente pedagógico alineado al CNB de Guatemala.<br>
+            Inicia sesión para personalizar tus planificaciones y documentos.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_izq, col_centro, col_der = st.columns([1, 1.3, 1])
+    with col_centro:
+        if google_auth_configurado():
+            if st.button("🔵 Continuar con Google", type="primary", use_container_width=True):
+                st.login("google")
+            st.markdown("<div style='text-align:center; color:#94a3b8; margin:0.8rem 0;'>— o ingresa directamente —</div>", unsafe_allow_html=True)
+
+        with st.form("form_ingreso_rapido"):
+            nombre_ingresado = st.text_input("Tu nombre y apellido:", placeholder="Ej. María Fernanda López")
+            entrar = st.form_submit_button("Ingresar a la Plataforma →", type="primary" if not google_auth_configurado() else "secondary", use_container_width=True)
+            if entrar:
+                if nombre_ingresado.strip():
+                    st.session_state.docente_invitado = nombre_ingresado.strip()
+                    st.rerun()
+                else:
+                    st.warning("Por favor escribe tu nombre para personalizar tus documentos.")
+    st.stop()
+
+# Obtener nombre y correo del usuario autenticado
+if usuario_google_activo:
+    nombre_usuario_actual = getattr(st.user, "name", "") or "Docente"
+    correo_usuario_actual = getattr(st.user, "email", "")
+else:
+    nombre_usuario_actual = st.session_state.docente_invitado
+    correo_usuario_actual = ""
+
+primer_nombre = nombre_usuario_actual.split()[0]
+
+# ==============================================================================
+# 3. CATÁLOGO CURRICULAR (PREPRIMARIA A DIVERSIFICADO)
 # ==============================================================================
 CURRICULO_GT = {
     "Preprimaria (4, 5 y 6 años)": {
@@ -80,7 +144,7 @@ CURRICULO_GT = {
 }
 
 # ==============================================================================
-# 3. BUSCADOR CNB EN VIVO
+# 4. BUSCADOR CNB EN VIVO
 # ==============================================================================
 @st.cache_data(show_spinner=False)
 def buscar_en_cnb_vivo(grado, area, tema):
@@ -110,7 +174,7 @@ def buscar_en_cnb_vivo(grado, area, tema):
         return []
 
 # ==============================================================================
-# 4. MOTOR DE IA (GEMINI SERIE 3)
+# 5. MOTOR DE IA (GEMINI SERIE 3)
 # ==============================================================================
 def obtener_modelos_activos(client):
     modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.8-pro"]
@@ -169,7 +233,7 @@ def generar_imagen_educativa(key, descripcion_imagen):
     return None
 
 # ==============================================================================
-# 5. GENERADORES DE DOCUMENTOS WORD (.DOCX)
+# 6. GENERADORES DE DOCUMENTOS WORD (.DOCX)
 # ==============================================================================
 def crear_word_planificacion(datos_doc, cnb_info, mat):
     doc = Document()
@@ -271,7 +335,7 @@ def crear_word_hoja_trabajo(datos_doc, hoja):
     return buf
 
 # ==============================================================================
-# 6. NAVEGACIÓN Y BARRA LATERAL (SIN NAVEGACIÓN RÁPIDA, CON QUETZAL Y DATOS)
+# 7. BARRA LATERAL (PERFIL DEL DOCENTE Y DATOS OFICIALES)
 # ==============================================================================
 if "herramienta_activa" not in st.session_state:
     st.session_state.herramienta_activa = "🏠 Inicio / Todas las Herramientas"
@@ -285,18 +349,28 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
+    st.caption(f"👤 Sesión activa: **{nombre_usuario_actual}**" + (f"\n📧 {correo_usuario_actual}" if correo_usuario_actual else ""))
+    if st.button("Cerrar sesión", use_container_width=True):
+        if usuario_google_activo:
+            st.logout()
+        else:
+            st.session_state.docente_invitado = ""
+            st.session_state.pop("mensajes_chat", None)
+            st.rerun()
+
     st.divider()
     with st.expander("🏫 Datos Oficiales del Docente", expanded=True):
-        establecimiento = st.text_input("Establecimiento:", "E.O.R.M. Los Chutes")
-        docente = st.text_input("Docente:", "Franklin Lucas")
-        director = st.text_input("Director(a):", "Lic. Carlos Méndez")
+        establecimiento = st.text_input("Establecimiento:", placeholder="Ej. E.O.R.M. / Instituto / Colegio...")
+        docente = st.text_input("Docente:", value=nombre_usuario_actual)
+        director = st.text_input("Director(a):", placeholder="Nombre del Director(a)")
         unidad = st.selectbox("Unidad / Bimestre:", ["I Bimestre", "II Bimestre", "III Bimestre", "IV Bimestre"])
         duracion = st.selectbox("Duración:", ["45 minutos (1 período)", "90 minutos (2 períodos)", "Plan Semanal (5 días)"])
 
 herramienta = st.session_state.herramienta_activa
+nombre_saludo = docente.split()[0] if docente.strip() else primer_nombre
 
 # ==============================================================================
-# 7. SELECTOR CURRICULAR UNIVERSAL
+# 8. SELECTOR CURRICULAR UNIVERSAL
 # ==============================================================================
 def bloque_selector_cnb():
     st.markdown("### 📚 Paso 1: Nivel, Grado y Tema del CNB")
@@ -326,21 +400,23 @@ def bloque_selector_cnb():
             st.info("💡 La IA alineará automáticamente este tema a las Competencias e Indicadores oficiales del CNB MINEDUC.")
 
     return {
-        "establecimiento": establecimiento, "docente": docente, "director": director,
+        "establecimiento": establecimiento or "Establecimiento Educativo",
+        "docente": docente or nombre_usuario_actual,
+        "director": director or "Dirección",
         "unidad": unidad, "duracion": duracion, "nivel": nivel, "grado": grado,
         "area": area, "tema": tema.strip() if tema.strip() else f"Contenidos fundamentales de {area}",
         "contexto": contexto, "cnb_vivo": cnb_encontrado
     }
 
 # ==============================================================================
-# 8. VISTAS PRINCIPALES (CLIC DIRECTO EN EL CENTRO)
+# 9. VISTAS PRINCIPALES
 # ==============================================================================
 if herramienta != "🏠 Inicio / Todas las Herramientas":
     st.button("⬅️ Volver a Todas las Herramientas", on_click=cambiar_herramienta, args=("🏠 Inicio / Todas las Herramientas",))
 
 if herramienta == "🏠 Inicio / Todas las Herramientas":
     st.markdown(
-        f'<div class="hero-box"><h1>👋 ¡Hola Profe {docente.split()[0]}, qué deseas crear hoy?</h1><p>Haz clic directamente en cualquiera de las herramientas alineadas al CNB de Guatemala (Preprimaria a Diversificado).</p></div>',
+        f'<div class="hero-box"><h1>👋 ¡Hola Profe {nombre_saludo}, qué deseas crear hoy?</h1><p>Haz clic directamente en cualquiera de las herramientas alineadas al CNB de Guatemala (Preprimaria a Diversificado).</p></div>',
         unsafe_allow_html=True
     )
 
@@ -440,7 +516,7 @@ elif herramienta == "🎨 Generador de Imágenes Educativas":
 elif herramienta == "💬 Chat con Asistente Pedagógico":
     st.header("💬 Chat con tu Asistente Pedagógico CNB")
     if "mensajes_chat" not in st.session_state:
-        st.session_state.mensajes_chat = [{"role": "assistant", "content": f"¡Hola Profe {docente.split()[0]}! Soy tu asistente pedagógico especializado en el CNB de Guatemala. ¿En qué te ayudo hoy?"}]
+        st.session_state.mensajes_chat = [{"role": "assistant", "content": f"¡Hola Profe {nombre_saludo}! Soy tu asistente pedagógico especializado en el CNB de Guatemala. ¿En qué te ayudo hoy?"}]
     for msg in st.session_state.mensajes_chat:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
