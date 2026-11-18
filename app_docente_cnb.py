@@ -191,14 +191,14 @@ def llamar_gemini_texto(key, prompt):
 
 def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro de texto"):
     estilos_en = {
-        "Ilustración libro de texto": "professional children textbook illustration, vibrant colors, detailed, clean white background, high quality digital art, no blurry text",
+        "Ilustración libro de texto": "professional children textbook illustration, vibrant colors, detailed, clean white background, high quality digital art, no text",
         "Dibujo para colorear (Blanco y negro)": "clean black and white coloring book page for kids, crisp black ink outlines on pure white background, cute detailed line art, no grayscale, no shading",
         "Esquema / Mapa visual de Ciencias": "detailed scientific educational poster illustration, clean infographic diagram style, white background, crisp rendering",
         "Contexto Cultural de Guatemala": "beautiful educational illustration set in Guatemala with volcanoes, Mayan textiles, quetzal and local culture, children book art style, vibrant colors"
     }
     detalle_en = estilos_en.get(estilo, estilos_en["Ilustración libro de texto"])
 
-    # 1. Traducir y enriquecer el prompt con Gemini para que la ilustración sea de nivel editorial
+    # 1. Enriquecer y traducir el prompt con Gemini para que la ilustración sea de nivel editorial
     desc_en = descripcion_imagen
     if key:
         try:
@@ -210,28 +210,40 @@ def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro
             pass
 
     prompt_final = f"{desc_en}, {detalle_en}"
+
+    # 2. Intentar primero con los modelos nativos de imagen de tu GEMINI_API_KEY
+    if key:
+        client = genai.Client(api_key=key)
+        for mod_img in ["gemini-2.5-flash-image", "gemini-2.0-flash-exp-image-generation"]:
+            try:
+                resp = client.models.generate_content(
+                    model=mod_img,
+                    contents=prompt_final,
+                    config=types.GenerateContentConfig(response_modalities=["IMAGE"])
+                )
+                for part in resp.candidates[0].content.parts:
+                    if getattr(part, "inline_data", None) and part.inline_data.data:
+                        return part.inline_data.data, None
+            except Exception:
+                pass
+
+        for mod_imagen in ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001"]:
+            try:
+                res_im = client.models.generate_images(
+                    model=mod_imagen,
+                    prompt=prompt_final,
+                    config=types.GenerateImagesConfig(number_of_images=1, output_mime_type="image/png", aspect_ratio="4:3")
+                )
+                if res_im.generated_images:
+                    return res_im.generated_images[0].image.image_bytes, None
+            except Exception:
+                pass
+
+    # 3. Si la clave gratuita no tiene cuota de imagen, devolver URL directa para que la cargue el navegador del docente
     prompt_codificado = urllib.parse.quote(prompt_final)
-    headers_web = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
-    }
-
-    # 2. Motor de ilustración profesional (Flux / Pollinations con cabeceras de navegador)
     seed = int(time.time())
-    urls_intento = [
-        f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=1024&height=768&model=flux&nologo=true&seed={seed}",
-        f"https://pollinations.ai/p/{prompt_codificado}?width=1024&height=768&nologo=true&seed={seed}"
-    ]
-
-    for url_img in urls_intento:
-        try:
-            resp = requests.get(url_img, headers=headers_web, timeout=45)
-            if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/") and len(resp.content) > 15000:
-                return resp.content, None
-        except Exception:
-            continue
-
-    return None, "El servidor gráfico tardó demasiado en responder. Presiona el botón nuevamente para reintentar."
+    url_navegador = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=1024&height=768&model=flux&nologo=true&seed={seed}"
+    return None, url_navegador
 
 # ==============================================================================
 # 6. GENERADORES DE DOCUMENTOS WORD (.DOCX)
@@ -523,8 +535,8 @@ elif herramienta == "🎨 Generador de Imágenes Educativas":
         if not desc_img.strip():
             st.warning("Por favor describe qué imagen deseas crear.")
         else:
-            with st.spinner("🖌️ Ilustrando recurso educativo en alta calidad (puede tardar 10-15 segundos)..."):
-                img_bytes, error_img = generar_imagen_educativa(api_key, desc_img, estilo_img)
+            with st.spinner("🖌️ Preparando ilustración educativa en alta calidad..."):
+                img_bytes, url_directa = generar_imagen_educativa(api_key, desc_img, estilo_img)
                 if img_bytes:
                     st.image(img_bytes, caption=f"{desc_img} ({estilo_img})", use_container_width=True)
                     st.download_button(
@@ -535,8 +547,21 @@ elif herramienta == "🎨 Generador de Imágenes Educativas":
                         type="primary",
                         use_container_width=True
                     )
-                else:
-                    st.error(f"❌ {error_img}")
+                elif url_directa:
+                    st.info("⏳ Tu ilustración se está renderizando directamente en tu navegador (tarda 5-10 segundos en aparecer abajo):")
+                    st.markdown(
+                        f'<div style="text-align:center; background:white; padding:12px; border-radius:12px; border:1px solid #cbd5e1;">'
+                        f'<img src="{url_directa}" alt="{desc_img}" style="max-width:100%; border-radius:8px;" />'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.link_button(
+                        "📥 ABRIR IMAGEN EN TAMAÑO COMPLETO PARA GUARDAR / IMPRIMIR",
+                        url=url_directa,
+                        type="primary",
+                        use_container_width=True
+                    )
 
 elif herramienta == "💬 Chat con Asistente Pedagógico":
     st.header("💬 Chat con tu Asistente Pedagógico CNB")
