@@ -3,7 +3,6 @@ import json
 import os
 import re
 import time
-import urllib.parse
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
@@ -149,7 +148,7 @@ def buscar_en_cnb_vivo(grado, area, tema):
         return []
 
 # ==============================================================================
-# 5. MOTOR DE IA (TEXTO, JSON E IMÁGENES EDUCATIVAS)
+# 5. MOTOR DE IA (TEXTO, JSON E ILUSTRACIONES VECTORIALES SVG)
 # ==============================================================================
 def obtener_modelos_activos(client):
     modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.8-pro"]
@@ -190,53 +189,35 @@ def llamar_gemini_texto(key, prompt):
     raise RuntimeError("No se pudo obtener respuesta del asistente en este momento.")
 
 def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro de texto"):
-    estilos_en = {
-        "Ilustración libro de texto": "clean educational textbook illustration, bright colors, simple and clear for students, white background, no blurry text",
-        "Dibujo para colorear (Blanco y negro)": "black and white coloring book page line art for kids, pure white background, thick clean black outlines, no gray shading",
-        "Esquema / Mapa visual de Ciencias": "clean scientific educational diagram illustration, clear visual components, white background, school poster style",
-        "Contexto Cultural de Guatemala": "educational illustration set in Guatemala with local landscapes and culture, friendly schoolbook style, bright colors"
+    if not key:
+        return None, "Falta configurar GEMINI_API_KEY."
+
+    estilos_svg = {
+        "Ilustración libro de texto": "Usa colores vivos, degradados suaves, formas limpias y fondo claro (#F8FAFC). Estilo libro de texto escolar moderno.",
+        "Dibujo para colorear (Blanco y negro)": "Usa EXCLUSIVAMENTE fondo blanco (#FFFFFF), líneas negras gruesas (stroke='#000000' stroke-width='3') y rellenos blancos (fill='#FFFFFF'). Sin colores ni grises, listo para que los niños coloreen.",
+        "Esquema / Mapa visual de Ciencias": "Diseña un diagrama científico claro con flechas, iconos geométricos limpios y etiquetas de texto cortas y legibles en español.",
+        "Contexto Cultural de Guatemala": "Incluye elementos visuales representativos de Guatemala (volcanes, quetzal, textiles, ceiba o paisajes locales) con colores vivos y estilo educativo."
     }
-    detalle_en = estilos_en.get(estilo, estilos_en["Ilustración libro de texto"])
+    instruccion_estilo = estilos_svg.get(estilo, estilos_svg["Ilustración libro de texto"])
 
-    # 1. Traducir descripción al inglés con Gemini para máxima precisión visual
-    desc_en = descripcion_imagen
-    if key:
-        try:
-            desc_en = llamar_gemini_texto(
-                key,
-                f"Translate this school illustration description into a concise English image prompt (max 25 words, no extra text): {descripcion_imagen}"
-            ).strip()
-        except Exception:
-            pass
+    prompt_svg = f"""Eres un ilustrador educativo experto. Crea una ilustración vectorial en código SVG completa, detallada y estéticamente agradable sobre: "{descripcion_imagen}".
+Estilo requerido: {instruccion_estilo}
 
-    prompt_final = f"{desc_en}, {detalle_en}"
+Reglas técnicas obligatorias:
+1. Devuelve ÚNICAMENTE el código XML del SVG empezando con <svg viewBox="0 0 800 600" width="800" height="600" xmlns="http://www.w3.org/2000/svg"> y terminando con </svg>.
+2. NO incluyas bloques markdown (```svg o ```xml), ni explicaciones antes o después.
+3. Usa formas geométricas bien proporcionadas (<circle>, <rect>, <path>, <ellipse>, <polygon>, <g>) y etiquetas <text> claras en español si son necesarias para explicar el tema (con font-family="Arial, sans-serif" y buen contraste).
+4. Asegúrate de que ningún elemento se salga del área 800x600."""
 
-    # 2. Intentar primero con API nativa de Google (si la cuenta tiene facturación activa)
-    if key:
-        client = genai.Client(api_key=key)
-        try:
-            res = client.models.generate_content(
-                model="gemini-2.5-flash-image",
-                contents=prompt_final,
-                config=types.GenerateContentConfig(response_modalities=["IMAGE"])
-            )
-            for part in res.candidates[0].content.parts:
-                if part.inline_data:
-                    return part.inline_data.data
-        except Exception:
-            pass
-
-    # 3. Generador gratuito sin restricciones (Pollinations AI)
     try:
-        prompt_codificado = urllib.parse.quote(prompt_final)
-        url_img = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=1024&height=768&nologo=true&seed={int(time.time())}"
-        resp = requests.get(url_img, timeout=25)
-        if resp.status_code == 200 and len(resp.content) > 5000:
-            return resp.content
-    except Exception:
-        pass
-
-    return None
+        respuesta = llamar_gemini_texto(key, prompt_svg)
+        match = re.search(r'<svg[\s\S]*?</svg>', respuesta, re.IGNORECASE)
+        if match:
+            svg_code = match.group(0)
+            return svg_code.encode("utf-8"), None
+        return None, "La IA no devolvió un formato gráfico válido. Intenta describir la imagen con más detalle."
+    except Exception as e:
+        return None, str(e)
 
 # ==============================================================================
 # 6. GENERADORES DE DOCUMENTOS WORD (.DOCX)
@@ -520,7 +501,7 @@ elif herramienta == "🎨 Generador de Imágenes Educativas":
     with col_desc:
         desc_img = st.text_area(
             "¿Qué imagen necesitas para tu clase?",
-            placeholder="Ej. Las partes de la planta, El ciclo del agua con volcanes de Guatemala, Un quetzal en el bosque nuboso...",
+            placeholder="Ej. Las partes de la planta con sus nombres, El ciclo del agua con volcanes de Guatemala, Las fracciones 1/2 y 1/4...",
             height=100
         )
 
@@ -528,25 +509,25 @@ elif herramienta == "🎨 Generador de Imágenes Educativas":
         if not desc_img.strip():
             st.warning("Por favor describe qué imagen deseas crear.")
         else:
-            with st.spinner("🖌️ Creando recurso visual educativo..."):
-                img_bytes = generar_imagen_educativa(api_key, desc_img, estilo_img)
-                if img_bytes:
-                    st.image(img_bytes, caption=f"{desc_img} ({estilo_img})", use_container_width=True)
+            with st.spinner("🖌️ Dibujando recurso visual educativo..."):
+                svg_bytes, error_img = generar_imagen_educativa(api_key, desc_img, estilo_img)
+                if svg_bytes:
+                    svg_texto = svg_bytes.decode("utf-8")
+                    st.markdown(
+                        f'<div style="background:white; padding:16px; border-radius:12px; border:1px solid #cbd5e1; text-align:center;">{svg_texto}</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.markdown("<br>", unsafe_allow_html=True)
                     st.download_button(
-                        "📥 DESCARGAR IMAGEN (.PNG)",
-                        data=img_bytes,
-                        file_name="Recurso_Visual_ProfeIA.png",
-                        mime="image/png",
+                        "📥 DESCARGAR ILUSTRACIÓN VECTORIAL (.SVG - SE ABRE EN WORD Y NAVEGADOR)",
+                        data=svg_bytes,
+                        file_name="Recurso_Visual_ProfeIA.svg",
+                        mime="image/svg+xml",
                         type="primary",
                         use_container_width=True
                     )
                 else:
-                    st.warning("⚠️ Tu clave API gratuita tiene restringida la generación directa de imágenes, pero aquí tienes la guía para dibujarlo fácil en el pizarrón:")
-                    try:
-                        guia_dibujo = llamar_gemini_texto(api_key, f"Describe paso a paso y con formas geométricas sencillas cómo un docente puede dibujar en el pizarrón: {desc_img}")
-                        st.info(guia_dibujo)
-                    except Exception as e:
-                        st.error(f"❌ {e}")
+                    st.error(f"❌ No se pudo generar la ilustración: {error_img}")
 
 elif herramienta == "💬 Chat con Asistente Pedagógico":
     st.header("💬 Chat con tu Asistente Pedagógico CNB")
