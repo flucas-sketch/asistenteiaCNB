@@ -176,61 +176,49 @@ def buscar_en_cnb_vivo(grado, area, tema):
 # ==============================================================================
 # 5. MOTOR DE IA (GEMINI SERIE 3)
 # ==============================================================================
-def obtener_modelos_activos(client):
-    modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.8-pro"]
-    try:
-        for m in client.models.list():
-            n = m.name.replace("models/", "")
-            if "gemini" in n and ("flash" in n or "pro" in n) and n not in modelos:
-                if not any(x in n for x in ["embedding", "vision", "image", "audio", "tts", "2.0", "2.5"]):
-                    modelos.append(n)
-    except Exception:
-        pass
-    return modelos
-
-def llamar_gemini_json(key, prompt):
-    if not key:
-        raise RuntimeError("Falta configurar GEMINI_API_KEY en los Secrets de Streamlit Cloud.")
-    client = genai.Client(api_key=key)
-    ultimo_error = ""
-    for mod in obtener_modelos_activos(client)[:5]:
-        try:
-            r = client.models.generate_content(model=mod, contents=prompt, config={"response_mime_type": "application/json", "temperature": 0.7})
-            data = json.loads(r.text)
-            return data[0] if isinstance(data, list) else data
-        except Exception as e:
-            ultimo_error = str(e)
-            time.sleep(1)
-    raise RuntimeError(f"Error de conexión IA: {ultimo_error}")
-
-def llamar_gemini_texto(key, prompt):
-    if not key:
-        raise RuntimeError("Falta configurar GEMINI_API_KEY en los Secrets de Streamlit Cloud.")
-    client = genai.Client(api_key=key)
-    for mod in obtener_modelos_activos(client)[:5]:
-        try:
-            return client.models.generate_content(model=mod, contents=prompt).text
-        except Exception:
-            time.sleep(1)
-    raise RuntimeError("No se pudo obtener respuesta del asistente en este momento.")
-
-def generar_imagen_educativa(key, descripcion_imagen):
+def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro de texto"):
     if not key:
         return None
     client = genai.Client(api_key=key)
-    prompt_img = f"Ilustración educativa limpia y didáctica para material escolar en Guatemala sobre: {descripcion_imagen}. Estilo libro de texto escolar moderno, colores vivos."
-    for mod_img in ["imagen-3.0-generate-002", "gemini-2.5-flash-image"]:
-        try:
-            if "imagen" in mod_img:
-                res = client.models.generate_images(model=mod_img, prompt=prompt_img, config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="4:3"))
-                return res.generated_images[0].image.image_bytes
-            res = client.models.generate_content(model=mod_img, contents=prompt_img)
-            for part in res.candidates[0].content.parts:
-                if part.inline_data:
-                    return part.inline_data.data
-        except Exception:
-            continue
-    return None
+    
+    estilos_prompt = {
+        "Ilustración libro de texto": "Ilustración educativa limpia, colores vivos, estilo libro de texto escolar moderno, sin texto borroso.",
+        "Dibujo para colorear (Blanco y negro)": "Dibujo lineal en blanco y negro (line art) para imprimir y colorear por niños, fondo blanco puro, líneas gruesas y claras, sin sombras grises.",
+        "Esquema / Mapa visual de Ciencias": "Diagrama educativo claro y didáctico estilo infografía escolar, fondo limpio, fácil de entender para estudiantes.",
+        "Contexto Cultural de Guatemala": "Ilustración educativa ambientada en Guatemala (paisajes, trajes típicos, flora o fauna local), estilo amigable para estudiantes."
+    }
+    
+    detalle_estilo = estilos_prompt.get(estilo, estilos_prompt["Ilustración libro de texto"])
+    prompt_img = f"Crea una imagen educativa sobre: {descripcion_imagen}. {detalle_estilo}"
+
+    # 1. Intentar primero con el modelo nativo de imagen de Gemini (más compatible con cuentas gratuitas)
+    try:
+        res = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=prompt_img,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"]
+            )
+        )
+        for part in res.candidates[0].content.parts:
+            if part.inline_data:
+                return part.inline_data.data
+    except Exception:
+        pass
+
+    # 2. Respaldo con Imagen 3
+    try:
+        res = client.models.generate_images(
+            model="imagen-3.0-generate-002",
+            prompt=prompt_img,
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="4:3"
+            )
+        )
+        return res.generated_images[0].image.image_bytes
+    except Exception:
+        return None
 
 # ==============================================================================
 # 6. GENERADORES DE DOCUMENTOS WORD (.DOCX)
