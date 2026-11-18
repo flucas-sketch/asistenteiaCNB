@@ -62,47 +62,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. CONTROL DE SESIÓN (GOOGLE LOGIN + MODO DOCENTE INVITADO)
+# 2. CONTROL DE SESIÓN DEL DOCENTE
 # ==============================================================================
-def google_auth_configurado():
-    try:
-        return "auth" in st.secrets and "google" in st.secrets["auth"]
-    except Exception:
-        return False
-
 if "docente_invitado" not in st.session_state:
     st.session_state.docente_invitado = ""
 
-usuario_google_activo = False
-try:
-    if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
-        usuario_google_activo = True
-except Exception:
-    usuario_google_activo = False
-
-# Pantalla de bienvenida e inicio de sesión si aún no se identifica
-if not usuario_google_activo and not st.session_state.docente_invitado:
+if not st.session_state.docente_invitado:
     st.markdown(f"""
     <div class="login-card">
         <div style="display:flex; justify-content:center; margin-bottom:12px;">{ICONO_QUETZAL_SVG}</div>
         <h2 style="color:#065f46; margin-bottom:4px;">Bienvenido a PROFE IA</h2>
         <p style="color:#475569; font-size:0.95rem; margin-bottom:1.5rem;">
             Tu asistente pedagógico alineado al CNB de Guatemala.<br>
-            Inicia sesión para personalizar tus planificaciones y documentos.
+            Escribe tu nombre para personalizar tus planificaciones y documentos.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
     col_izq, col_centro, col_der = st.columns([1, 1.3, 1])
     with col_centro:
-        if google_auth_configurado():
-            if st.button("🔵 Continuar con Google", type="primary", use_container_width=True):
-                st.login("google")
-            st.markdown("<div style='text-align:center; color:#94a3b8; margin:0.8rem 0;'>— o ingresa directamente —</div>", unsafe_allow_html=True)
-
         with st.form("form_ingreso_rapido"):
             nombre_ingresado = st.text_input("Tu nombre y apellido:", placeholder="Ej. María Fernanda López")
-            entrar = st.form_submit_button("Ingresar a la Plataforma →", type="primary" if not google_auth_configurado() else "secondary", use_container_width=True)
+            entrar = st.form_submit_button("Ingresar a la Plataforma →", type="primary", use_container_width=True)
             if entrar:
                 if nombre_ingresado.strip():
                     st.session_state.docente_invitado = nombre_ingresado.strip()
@@ -111,14 +92,7 @@ if not usuario_google_activo and not st.session_state.docente_invitado:
                     st.warning("Por favor escribe tu nombre para personalizar tus documentos.")
     st.stop()
 
-# Obtener nombre y correo del usuario autenticado
-if usuario_google_activo:
-    nombre_usuario_actual = getattr(st.user, "name", "") or "Docente"
-    correo_usuario_actual = getattr(st.user, "email", "")
-else:
-    nombre_usuario_actual = st.session_state.docente_invitado
-    correo_usuario_actual = ""
-
+nombre_usuario_actual = st.session_state.docente_invitado
 primer_nombre = nombre_usuario_actual.split()[0]
 
 # ==============================================================================
@@ -174,31 +148,66 @@ def buscar_en_cnb_vivo(grado, area, tema):
         return []
 
 # ==============================================================================
-# 5. MOTOR DE IA (GEMINI SERIE 3)
+# 5. MOTOR DE IA (TEXTO, JSON E IMÁGENES EDUCATIVAS)
 # ==============================================================================
+def obtener_modelos_activos(client):
+    modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.8-pro"]
+    try:
+        for m in client.models.list():
+            n = m.name.replace("models/", "")
+            if "gemini" in n and ("flash" in n or "pro" in n) and n not in modelos:
+                if not any(x in n for x in ["embedding", "vision", "image", "audio", "tts", "2.0", "2.5"]):
+                    modelos.append(n)
+    except Exception:
+        pass
+    return modelos
+
+def llamar_gemini_json(key, prompt):
+    if not key:
+        raise RuntimeError("Falta configurar GEMINI_API_KEY en los Secrets de Streamlit Cloud.")
+    client = genai.Client(api_key=key)
+    ultimo_error = ""
+    for mod in obtener_modelos_activos(client)[:5]:
+        try:
+            r = client.models.generate_content(model=mod, contents=prompt, config={"response_mime_type": "application/json", "temperature": 0.7})
+            data = json.loads(r.text)
+            return data[0] if isinstance(data, list) else data
+        except Exception as e:
+            ultimo_error = str(e)
+            time.sleep(1)
+    raise RuntimeError(f"Error de conexión IA: {ultimo_error}")
+
+def llamar_gemini_texto(key, prompt):
+    if not key:
+        raise RuntimeError("Falta configurar GEMINI_API_KEY en los Secrets de Streamlit Cloud.")
+    client = genai.Client(api_key=key)
+    for mod in obtener_modelos_activos(client)[:5]:
+        try:
+            return client.models.generate_content(model=mod, contents=prompt).text
+        except Exception:
+            time.sleep(1)
+    raise RuntimeError("No se pudo obtener respuesta del asistente en este momento.")
+
 def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro de texto"):
     if not key:
         return None
     client = genai.Client(api_key=key)
-    
+
     estilos_prompt = {
         "Ilustración libro de texto": "Ilustración educativa limpia, colores vivos, estilo libro de texto escolar moderno, sin texto borroso.",
         "Dibujo para colorear (Blanco y negro)": "Dibujo lineal en blanco y negro (line art) para imprimir y colorear por niños, fondo blanco puro, líneas gruesas y claras, sin sombras grises.",
         "Esquema / Mapa visual de Ciencias": "Diagrama educativo claro y didáctico estilo infografía escolar, fondo limpio, fácil de entender para estudiantes.",
         "Contexto Cultural de Guatemala": "Ilustración educativa ambientada en Guatemala (paisajes, trajes típicos, flora o fauna local), estilo amigable para estudiantes."
     }
-    
+
     detalle_estilo = estilos_prompt.get(estilo, estilos_prompt["Ilustración libro de texto"])
     prompt_img = f"Crea una imagen educativa sobre: {descripcion_imagen}. {detalle_estilo}"
 
-    # 1. Intentar primero con el modelo nativo de imagen de Gemini (más compatible con cuentas gratuitas)
     try:
         res = client.models.generate_content(
             model="gemini-2.5-flash-image",
             contents=prompt_img,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"]
-            )
+            config=types.GenerateContentConfig(response_modalities=["IMAGE"])
         )
         for part in res.candidates[0].content.parts:
             if part.inline_data:
@@ -206,15 +215,11 @@ def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro
     except Exception:
         pass
 
-    # 2. Respaldo con Imagen 3
     try:
         res = client.models.generate_images(
             model="imagen-3.0-generate-002",
             prompt=prompt_img,
-            config=types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="4:3"
-            )
+            config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="4:3")
         )
         return res.generated_images[0].image.image_bytes
     except Exception:
@@ -337,14 +342,11 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    st.caption(f"👤 Sesión activa: **{nombre_usuario_actual}**" + (f"\n📧 {correo_usuario_actual}" if correo_usuario_actual else ""))
-    if st.button("Cerrar sesión", use_container_width=True):
-        if usuario_google_activo:
-            st.logout()
-        else:
-            st.session_state.docente_invitado = ""
-            st.session_state.pop("mensajes_chat", None)
-            st.rerun()
+    st.caption(f"👤 Sesión activa: **{nombre_usuario_actual}**")
+    if st.button("Cambiar de docente", use_container_width=True):
+        st.session_state.docente_invitado = ""
+        st.session_state.pop("mensajes_chat", None)
+        st.rerun()
 
     st.divider()
     with st.expander("🏫 Datos Oficiales del Docente", expanded=True):
@@ -360,189 +362,4 @@ nombre_saludo = docente.split()[0] if docente.strip() else primer_nombre
 # ==============================================================================
 # 8. SELECTOR CURRICULAR UNIVERSAL
 # ==============================================================================
-def bloque_selector_cnb():
-    st.markdown("### 📚 Paso 1: Nivel, Grado y Tema del CNB")
-    c1, c2, c3 = st.columns([1, 1, 1.3])
-    with c1:
-        nivel = st.selectbox("Nivel Educativo:", list(CURRICULO_GT.keys()))
-    with c2:
-        grado = st.selectbox("Grado:", CURRICULO_GT[nivel]["grados"])
-    with c3:
-        area = st.selectbox("Área Curricular:", CURRICULO_GT[nivel]["areas"])
-
-    col_tema, col_ctx = st.columns([1.3, 1])
-    with col_tema:
-        tema = st.text_input("🔎 Tema específico o contenido a trabajar:", placeholder="Ej. Las fracciones, La célula, Derechos Humanos...")
-    with col_ctx:
-        contexto = st.text_input("Contexto del aula (opcional):", "Aula en Guatemala, recursos accesibles, enfoque participativo.")
-
-    cnb_encontrado = {}
-    if tema.strip():
-        registros = buscar_en_cnb_vivo(grado, area, tema)
-        if registros:
-            st.success(f"✅ Se encontraron {len(registros)} referencias en {registros[0]['fuente']}.")
-            opciones = [f"{i+1}. {r['indicador_logro'][:90]}..." for i, r in enumerate(registros)]
-            idx = st.selectbox("Indicador de Logro encontrado:", range(len(opciones)), format_func=lambda x: opciones[x])
-            cnb_encontrado = registros[idx]
-        else:
-            st.info("💡 La IA alineará automáticamente este tema a las Competencias e Indicadores oficiales del CNB MINEDUC.")
-
-    return {
-        "establecimiento": establecimiento or "Establecimiento Educativo",
-        "docente": docente or nombre_usuario_actual,
-        "director": director or "Dirección",
-        "unidad": unidad, "duracion": duracion, "nivel": nivel, "grado": grado,
-        "area": area, "tema": tema.strip() if tema.strip() else f"Contenidos fundamentales de {area}",
-        "contexto": contexto, "cnb_vivo": cnb_encontrado
-    }
-
-# ==============================================================================
-# 9. VISTAS PRINCIPALES
-# ==============================================================================
-if herramienta != "🏠 Inicio / Todas las Herramientas":
-    st.button("⬅️ Volver a Todas las Herramientas", on_click=cambiar_herramienta, args=("🏠 Inicio / Todas las Herramientas",))
-
-if herramienta == "🏠 Inicio / Todas las Herramientas":
-    st.markdown(
-        f'<div class="hero-box"><h1>👋 ¡Hola Profe {nombre_saludo}, qué deseas crear hoy?</h1><p>Haz clic directamente en cualquiera de las herramientas alineadas al CNB de Guatemala (Preprimaria a Diversificado).</p></div>',
-        unsafe_allow_html=True
-    )
-
-    st.subheader("✨ Selecciona una herramienta para comenzar")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown('<div class="tool-card"><h4>📋 Planificador de Clase CNB</h4><p>Secuencias didácticas (Inicio, Desarrollo y Cierre) alineadas al CNB en Word listo para firmar.</p></div>', unsafe_allow_html=True)
-        st.button("Abrir Planificador →", key="btn_plan", on_click=cambiar_herramienta, args=("📋 Planificador de Clase CNB",), use_container_width=True, type="primary")
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="tool-card"><h4>🎨 Recursos Visuales y Pizarrón</h4><p>Ilustraciones educativas o guías paso a paso para dibujar esquemas didácticos en tu aula.</p></div>', unsafe_allow_html=True)
-        st.button("Abrir Recursos Visuales →", key="btn_img", on_click=cambiar_herramienta, args=("🎨 Generador de Imágenes Educativas",), use_container_width=True)
-
-    with col2:
-        st.markdown('<div class="tool-card"><h4>📊 Generador de Rúbricas</h4><p>Rúbricas analíticas con 4 niveles de desempeño (Excelente a Debe Mejorar) en tabla Word.</p></div>', unsafe_allow_html=True)
-        st.button("Abrir Rúbricas →", key="btn_rub", on_click=cambiar_herramienta, args=("📊 Generador de Rúbricas",), use_container_width=True, type="primary")
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="tool-card"><h4>💬 Chat Asistente Pedagógico</h4><p>Pide dinámicas, adaptaciones curriculares, ejemplos guatemaltecos o ideas multigrado.</p></div>', unsafe_allow_html=True)
-        st.button("Abrir Chat Pedagógico →", key="btn_chat", on_click=cambiar_herramienta, args=("💬 Chat con Asistente Pedagógico",), use_container_width=True)
-
-    with col3:
-        st.markdown('<div class="tool-card"><h4>📝 Hojas de Trabajo</h4><p>Guías de ejercicios y actividades listas para imprimir y entregar a tus estudiantes.</p></div>', unsafe_allow_html=True)
-        st.button("Abrir Hojas de Trabajo →", key="btn_hoja", on_click=cambiar_herramienta, args=("📝 Hojas de Trabajo y Ejercicios",), use_container_width=True, type="primary")
-
-elif herramienta == "📋 Planificador de Clase CNB":
-    st.header("📋 Planificador de Clase Oficial (CNB Guatemala)")
-    datos = bloque_selector_cnb()
-    if st.button("🚀 GENERAR PLANIFICACIÓN DE CLASE (.DOCX)", type="primary", use_container_width=True):
-        with st.spinner("🧠 Diseñando planificación alineada al CNB de Guatemala..."):
-            try:
-                ref_cnb = f"Referencia CNB: {datos['cnb_vivo']}" if datos["cnb_vivo"] else "Deduce Competencia, Indicador de Logro y Contenidos oficiales del CNB MINEDUC Guatemala."
-                prompt = f"""Experto pedagogo MINEDUC Guatemala (CNB). Crea planificación para {datos['nivel']} | {datos['grado']} | {datos['area']}, Tema: {datos['tema']}, Duración: {datos['duracion']}, Contexto: {datos['contexto']}. {ref_cnb}.
-                Responde SOLO JSON válido con claves: "competencia_oficial", "indicador_oficial", "contenidos_oficiales" (lista), "actividad_inicio", "actividad_desarrollo", "actividad_cierre", "materiales_necesarios" (lista), "evaluacion_criterios" (lista)."""
-                res = llamar_gemini_json(api_key, prompt)
-                st.success("✅ ¡Planificación lista!")
-                st.download_button("📥 DESCARGAR PLANIFICACIÓN EN WORD (.DOCX)", data=crear_word_planificacion(datos, datos["cnb_vivo"], res), file_name=f"Planificacion_{datos['grado'].replace(' ', '_')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary", use_container_width=True)
-                st.markdown(f'<div class="cnb-pill"><b>Competencia CNB:</b> {res.get("competencia_oficial")}<br><b>Indicador de Logro:</b> {res.get("indicador_oficial")}</div>', unsafe_allow_html=True)
-                st.subheader("1. Inicio")
-                st.write(res.get("actividad_inicio"))
-                st.subheader("2. Desarrollo")
-                st.write(res.get("actividad_desarrollo"))
-                st.subheader("3. Cierre")
-                st.write(res.get("actividad_cierre"))
-            except Exception as e:
-                st.error(f"❌ {e}")
-
-elif herramienta == "📊 Generador de Rúbricas":
-    st.header("📊 Generador de Rúbricas de Evaluación (CNB)")
-    datos = bloque_selector_cnb()
-    actividad_eval = st.text_input("Actividad o producto a evaluar:", "Exposición oral / Maqueta / Resolución de problemas")
-    if st.button("🚀 GENERAR RÚBRICA EN WORD (.DOCX)", type="primary", use_container_width=True):
-        with st.spinner("📊 Construyendo matriz de evaluación..."):
-            try:
-                prompt = f"""Crea rúbrica analítica CNB Guatemala para {datos['grado']} - {datos['area']}, Tema: {datos['tema']}, Actividad: {actividad_eval}.
-                Responde SOLO JSON válido: {{"titulo": "...", "criterios": [{{"criterio": "...", "excelente": "...", "muy_bueno": "...", "satisfactorio": "...", "debe_mejorar": "..."}}]}} con 4 criterios."""
-                rub = llamar_gemini_json(api_key, prompt)
-                st.success("✅ ¡Rúbrica generada!")
-                st.download_button("📥 DESCARGAR RÚBRICA EN WORD (.DOCX)", data=crear_word_rubrica(datos, rub), file_name=f"Rubrica_{datos['tema'][:20].replace(' ', '_')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary", use_container_width=True)
-                st.table(rub.get("criterios", []))
-            except Exception as e:
-                st.error(f"❌ {e}")
-
-elif herramienta == "📝 Hojas de Trabajo y Ejercicios":
-    st.header("📝 Generador de Hojas de Trabajo para Estudiantes")
-    datos = bloque_selector_cnb()
-    cant_ej = st.slider("Cantidad de ejercicios:", 3, 10, 5)
-    if st.button("🚀 GENERAR HOJA DE TRABAJO (.DOCX)", type="primary", use_container_width=True):
-        with st.spinner("📝 Redactando ejercicios contextualizados a Guatemala..."):
-            try:
-                prompt = f"""Diseña hoja de trabajo para estudiantes de Guatemala: {datos['nivel']} | {datos['grado']} | {datos['area']}, Tema: {datos['tema']}, Contexto: {datos['contexto']}, Cantidad: {cant_ej} ejercicios.
-                Responde SOLO JSON válido: {{"titulo": "...", "instrucciones": "...", "ejercicios": ["..."], "clave_docente": ["..."]}}."""
-                hoja = llamar_gemini_json(api_key, prompt)
-                st.success("✅ ¡Hoja de trabajo lista!")
-                st.download_button("📥 DESCARGAR HOJA DE TRABAJO (.DOCX)", data=crear_word_hoja_trabajo(datos, hoja), file_name=f"Hoja_Trabajo_{datos['tema'][:20].replace(' ', '_')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary", use_container_width=True)
-                st.subheader(hoja.get("titulo", ""))
-                st.write(f"**Instrucciones:** {hoja.get('instrucciones', '')}")
-                for i, ej in enumerate(hoja.get("ejercicios", []), 1):
-                    st.markdown(f"**{i}.** {ej}")
-                with st.expander("🔑 Ver Clave de Respuestas (Solo para el Docente)"):
-                    for i, resp in enumerate(hoja.get("clave_docente", []), 1):
-                        st.write(f"**{i}.** {resp}")
-            except Exception as e:
-                st.error(f"❌ {e}")
-
-elif herramienta == "🎨 Generador de Imágenes Educativas":
-    st.header("🎨 Generador de Recursos Visuales e Ilustraciones para el Aula")
-    
-    col_est, col_desc = st.columns([1, 2])
-    with col_est:
-        estilo_img = st.selectbox(
-            "Estilo del recurso visual:",
-            [
-                "Ilustración libro de texto",
-                "Dibujo para colorear (Blanco y negro)",
-                "Esquema / Mapa visual de Ciencias",
-                "Contexto Cultural de Guatemala"
-            ]
-        )
-    with col_desc:
-        desc_img = st.text_area(
-            "¿Qué imagen necesitas para tu clase?",
-            placeholder="Ej. Las partes de la planta, El ciclo del agua con volcanes de Guatemala, Un quetzal en el bosque nuboso...",
-            height=100
-        )
-
-    if st.button("🎨 GENERAR ILUSTRACIÓN EDUCATIVA", type="primary", use_container_width=True):
-        if not desc_img.strip():
-            st.warning("Por favor describe qué imagen deseas crear.")
-        else:
-            with st.spinner("🖌️ Creando recurso visual educativo..."):
-                img_bytes = generar_imagen_educativa(api_key, desc_img, estilo_img)
-                if img_bytes:
-                    st.image(img_bytes, caption=f"{desc_img} ({estilo_img})", use_container_width=True)
-                    st.download_button(
-                        "📥 DESCARGAR IMAGEN (.PNG)",
-                        data=img_bytes,
-                        file_name="Recurso_Visual_ProfeIA.png",
-                        mime="image/png",
-                        type="primary",
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("⚠️ Tu clave API gratuita actual tiene restringida la generación directa de imágenes, pero aquí tienes la guía para dibujarlo fácil en el pizarrón:")
-                    st.info(llamar_gemini_texto(api_key, f"Describe paso a paso y con formas geométricas sencillas cómo un docente puede dibujar en el pizarrón: {desc_img}"))
-
-elif herramienta == "💬 Chat con Asistente Pedagógico":
-    st.header("💬 Chat con tu Asistente Pedagógico CNB")
-    if "mensajes_chat" not in st.session_state:
-        st.session_state.mensajes_chat = [{"role": "assistant", "content": f"¡Hola Profe {nombre_saludo}! Soy tu asistente pedagógico especializado en el CNB de Guatemala. ¿En qué te ayudo hoy?"}]
-    for msg in st.session_state.mensajes_chat:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-    pregunta = st.chat_input("Escribe tu consulta pedagógica aquí...")
-    if pregunta:
-        st.session_state.mensajes_chat.append({"role": "user", "content": pregunta})
-        with st.chat_message("user"):
-            st.write(pregunta)
-        with st.chat_message("assistant"):
-            with st.spinner("Pensando..."):
-                respuesta = llamar_gemini_texto(api_key, f"Eres un asesor pedagógico experto en el CNB de Guatemala (MINEDUC). Responde de forma práctica y aplicable.\n\nConsulta: {pregunta}")
-                st.write(respuesta)
-                st.session_state.mensajes_chat.append({"role": "assistant", "content": respuesta})
+def bloque
