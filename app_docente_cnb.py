@@ -490,16 +490,44 @@ elif herramienta == "📝 Hojas de Trabajo y Ejercicios":
 
 elif herramienta == "🎨 Generador de Imágenes Educativas":
     st.header("🎨 Generador de Recursos Visuales e Ilustraciones para el Aula")
-    desc_img = st.text_area("Descripción de la imagen:", "El ciclo del agua en un paisaje de Guatemala con volcanes, ríos y nubes, estilo ilustración escolar clara para niños.", height=100)
+    
+    col_est, col_desc = st.columns([1, 2])
+    with col_est:
+        estilo_img = st.selectbox(
+            "Estilo del recurso visual:",
+            [
+                "Ilustración libro de texto",
+                "Dibujo para colorear (Blanco y negro)",
+                "Esquema / Mapa visual de Ciencias",
+                "Contexto Cultural de Guatemala"
+            ]
+        )
+    with col_desc:
+        desc_img = st.text_area(
+            "¿Qué imagen necesitas para tu clase?",
+            placeholder="Ej. Las partes de la planta, El ciclo del agua con volcanes de Guatemala, Un quetzal en el bosque nuboso...",
+            height=100
+        )
+
     if st.button("🎨 GENERAR ILUSTRACIÓN EDUCATIVA", type="primary", use_container_width=True):
-        with st.spinner("🖌️ Creando recurso visual educativo..."):
-            img_bytes = generar_imagen_educativa(api_key, desc_img)
-            if img_bytes:
-                st.image(img_bytes, caption=desc_img, use_container_width=True)
-                st.download_button("📥 DESCARGAR IMAGEN (.PNG)", data=img_bytes, file_name="Recurso_Visual_Aula.png", mime="image/png", type="primary")
-            else:
-                st.info("🎨 Guía visual paso a paso para dibujarla en el pizarrón o proyectarla:")
-                st.write(llamar_gemini_texto(api_key, f"Describe paso a paso cómo un docente puede dibujar en el pizarrón de forma sencilla: {desc_img}"))
+        if not desc_img.strip():
+            st.warning("Por favor describe qué imagen deseas crear.")
+        else:
+            with st.spinner("🖌️ Creando recurso visual educativo..."):
+                img_bytes = generar_imagen_educativa(api_key, desc_img, estilo_img)
+                if img_bytes:
+                    st.image(img_bytes, caption=f"{desc_img} ({estilo_img})", use_container_width=True)
+                    st.download_button(
+                        "📥 DESCARGAR IMAGEN (.PNG)",
+                        data=img_bytes,
+                        file_name="Recurso_Visual_ProfeIA.png",
+                        mime="image/png",
+                        type="primary",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("⚠️ Tu clave API gratuita actual tiene restringida la generación directa de imágenes, pero aquí tienes la guía para dibujarlo fácil en el pizarrón:")
+                    st.info(llamar_gemini_texto(api_key, f"Describe paso a paso y con formas geométricas sencillas cómo un docente puede dibujar en el pizarrón: {desc_img}"))
 
 elif herramienta == "💬 Chat con Asistente Pedagógico":
     st.header("💬 Chat con tu Asistente Pedagógico CNB")
