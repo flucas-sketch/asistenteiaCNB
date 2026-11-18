@@ -362,4 +362,193 @@ nombre_saludo = docente.split()[0] if docente.strip() else primer_nombre
 # ==============================================================================
 # 8. SELECTOR CURRICULAR UNIVERSAL
 # ==============================================================================
-def bloque
+def bloque_selector_cnb():
+    st.markdown("### 📚 Paso 1: Nivel, Grado y Tema del CNB")
+    c1, c2, c3 = st.columns([1, 1, 1.3])
+    with c1:
+        nivel = st.selectbox("Nivel Educativo:", list(CURRICULO_GT.keys()))
+    with c2:
+        grado = st.selectbox("Grado:", CURRICULO_GT[nivel]["grados"])
+    with c3:
+        area = st.selectbox("Área Curricular:", CURRICULO_GT[nivel]["areas"])
+
+    col_tema, col_ctx = st.columns([1.3, 1])
+    with col_tema:
+        tema = st.text_input("🔎 Tema específico o contenido a trabajar:", placeholder="Ej. Las fracciones, La célula, Derechos Humanos...")
+    with col_ctx:
+        contexto = st.text_input("Contexto del aula (opcional):", "Aula en Guatemala, recursos accesibles, enfoque participativo.")
+
+    cnb_encontrado = {}
+    if tema.strip():
+        registros = buscar_en_cnb_vivo(grado, area, tema)
+        if registros:
+            st.success(f"✅ Se encontraron {len(registros)} referencias en {registros[0]['fuente']}.")
+            opciones = [f"{i+1}. {r['indicador_logro'][:90]}..." for i, r in enumerate(registros)]
+            idx = st.selectbox("Indicador de Logro encontrado:", range(len(opciones)), format_func=lambda x: opciones[x])
+            cnb_encontrado = registros[idx]
+        else:
+            st.info("💡 La IA alineará automáticamente este tema a las Competencias e Indicadores oficiales del CNB MINEDUC.")
+
+    return {
+        "establecimiento": establecimiento or "Establecimiento Educativo",
+        "docente": docente or nombre_usuario_actual,
+        "director": director or "Dirección",
+        "unidad": unidad, "duracion": duracion, "nivel": nivel, "grado": grado,
+        "area": area, "tema": tema.strip() if tema.strip() else f"Contenidos fundamentales de {area}",
+        "contexto": contexto, "cnb_vivo": cnb_encontrado
+    }
+
+# ==============================================================================
+# 9. VISTAS PRINCIPALES
+# ==============================================================================
+if herramienta != "🏠 Inicio / Todas las Herramientas":
+    st.button("⬅️ Volver a Todas las Herramientas", on_click=cambiar_herramienta, args=("🏠 Inicio / Todas las Herramientas",))
+
+if herramienta == "🏠 Inicio / Todas las Herramientas":
+    st.markdown(
+        f'<div class="hero-box"><h1>👋 ¡Hola Profe {nombre_saludo}, qué deseas crear hoy?</h1><p>Haz clic directamente en cualquiera de las herramientas alineadas al CNB de Guatemala (Preprimaria a Diversificado).</p></div>',
+        unsafe_allow_html=True
+    )
+
+    st.subheader("✨ Selecciona una herramienta para comenzar")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown('<div class="tool-card"><h4>📋 Planificador de Clase CNB</h4><p>Secuencias didácticas (Inicio, Desarrollo y Cierre) alineadas al CNB en Word listo para firmar.</p></div>', unsafe_allow_html=True)
+        st.button("Abrir Planificador →", key="btn_plan", on_click=cambiar_herramienta, args=("📋 Planificador de Clase CNB",), use_container_width=True, type="primary")
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="tool-card"><h4>🎨 Recursos Visuales y Pizarrón</h4><p>Ilustraciones educativas o guías paso a paso para dibujar esquemas didácticos en tu aula.</p></div>', unsafe_allow_html=True)
+        st.button("Abrir Recursos Visuales →", key="btn_img", on_click=cambiar_herramienta, args=("🎨 Generador de Imágenes Educativas",), use_container_width=True)
+
+    with col2:
+        st.markdown('<div class="tool-card"><h4>📊 Generador de Rúbricas</h4><p>Rúbricas analíticas con 4 niveles de desempeño (Excelente a Debe Mejorar) en tabla Word.</p></div>', unsafe_allow_html=True)
+        st.button("Abrir Rúbricas →", key="btn_rub", on_click=cambiar_herramienta, args=("📊 Generador de Rúbricas",), use_container_width=True, type="primary")
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="tool-card"><h4>💬 Chat Asistente Pedagógico</h4><p>Pide dinámicas, adaptaciones curriculares, ejemplos guatemaltecos o ideas multigrado.</p></div>', unsafe_allow_html=True)
+        st.button("Abrir Chat Pedagógico →", key="btn_chat", on_click=cambiar_herramienta, args=("💬 Chat con Asistente Pedagógico",), use_container_width=True)
+
+    with col3:
+        st.markdown('<div class="tool-card"><h4>📝 Hojas de Trabajo</h4><p>Guías de ejercicios y actividades listas para imprimir y entregar a tus estudiantes.</p></div>', unsafe_allow_html=True)
+        st.button("Abrir Hojas de Trabajo →", key="btn_hoja", on_click=cambiar_herramienta, args=("📝 Hojas de Trabajo y Ejercicios",), use_container_width=True, type="primary")
+
+elif herramienta == "📋 Planificador de Clase CNB":
+    st.header("📋 Planificador de Clase Oficial (CNB Guatemala)")
+    datos = bloque_selector_cnb()
+    if st.button("🚀 GENERAR PLANIFICACIÓN DE CLASE (.DOCX)", type="primary", use_container_width=True):
+        with st.spinner("🧠 Diseñando planificación alineada al CNB de Guatemala..."):
+            try:
+                ref_cnb = f"Referencia CNB: {datos['cnb_vivo']}" if datos["cnb_vivo"] else "Deduce Competencia, Indicador de Logro y Contenidos oficiales del CNB MINEDUC Guatemala."
+                prompt = f"""Experto pedagogo MINEDUC Guatemala (CNB). Crea planificación para {datos['nivel']} | {datos['grado']} | {datos['area']}, Tema: {datos['tema']}, Duración: {datos['duracion']}, Contexto: {datos['contexto']}. {ref_cnb}.
+                Responde SOLO JSON válido con claves: "competencia_oficial", "indicador_oficial", "contenidos_oficiales" (lista), "actividad_inicio", "actividad_desarrollo", "actividad_cierre", "materiales_necesarios" (lista), "evaluacion_criterios" (lista)."""
+                res = llamar_gemini_json(api_key, prompt)
+                st.success("✅ ¡Planificación lista!")
+                st.download_button("📥 DESCARGAR PLANIFICACIÓN EN WORD (.DOCX)", data=crear_word_planificacion(datos, datos["cnb_vivo"], res), file_name=f"Planificacion_{datos['grado'].replace(' ', '_')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary", use_container_width=True)
+                st.markdown(f'<div class="cnb-pill"><b>Competencia CNB:</b> {res.get("competencia_oficial")}<br><b>Indicador de Logro:</b> {res.get("indicador_oficial")}</div>', unsafe_allow_html=True)
+                st.subheader("1. Inicio")
+                st.write(res.get("actividad_inicio"))
+                st.subheader("2. Desarrollo")
+                st.write(res.get("actividad_desarrollo"))
+                st.subheader("3. Cierre")
+                st.write(res.get("actividad_cierre"))
+            except Exception as e:
+                st.error(f"❌ {e}")
+
+elif herramienta == "📊 Generador de Rúbricas":
+    st.header("📊 Generador de Rúbricas de Evaluación (CNB)")
+    datos = bloque_selector_cnb()
+    actividad_eval = st.text_input("Actividad o producto a evaluar:", "Exposición oral / Maqueta / Resolución de problemas")
+    if st.button("🚀 GENERAR RÚBRICA EN WORD (.DOCX)", type="primary", use_container_width=True):
+        with st.spinner("📊 Construyendo matriz de evaluación..."):
+            try:
+                prompt = f"""Crea rúbrica analítica CNB Guatemala para {datos['grado']} - {datos['area']}, Tema: {datos['tema']}, Actividad: {actividad_eval}.
+                Responde SOLO JSON válido: {{"titulo": "...", "criterios": [{{"criterio": "...", "excelente": "...", "muy_bueno": "...", "satisfactorio": "...", "debe_mejorar": "..."}}]}} con 4 criterios."""
+                rub = llamar_gemini_json(api_key, prompt)
+                st.success("✅ ¡Rúbrica generada!")
+                st.download_button("📥 DESCARGAR RÚBRICA EN WORD (.DOCX)", data=crear_word_rubrica(datos, rub), file_name=f"Rubrica_{datos['tema'][:20].replace(' ', '_')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary", use_container_width=True)
+                st.table(rub.get("criterios", []))
+            except Exception as e:
+                st.error(f"❌ {e}")
+
+elif herramienta == "📝 Hojas de Trabajo y Ejercicios":
+    st.header("📝 Generador de Hojas de Trabajo para Estudiantes")
+    datos = bloque_selector_cnb()
+    cant_ej = st.slider("Cantidad de ejercicios:", 3, 10, 5)
+    if st.button("🚀 GENERAR HOJA DE TRABAJO (.DOCX)", type="primary", use_container_width=True):
+        with st.spinner("📝 Redactando ejercicios contextualizados a Guatemala..."):
+            try:
+                prompt = f"""Diseña hoja de trabajo para estudiantes de Guatemala: {datos['nivel']} | {datos['grado']} | {datos['area']}, Tema: {datos['tema']}, Contexto: {datos['contexto']}, Cantidad: {cant_ej} ejercicios.
+                Responde SOLO JSON válido: {{"titulo": "...", "instrucciones": "...", "ejercicios": ["..."], "clave_docente": ["..."]}}."""
+                hoja = llamar_gemini_json(api_key, prompt)
+                st.success("✅ ¡Hoja de trabajo lista!")
+                st.download_button("📥 DESCARGAR HOJA DE TRABAJO (.DOCX)", data=crear_word_hoja_trabajo(datos, hoja), file_name=f"Hoja_Trabajo_{datos['tema'][:20].replace(' ', '_')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", type="primary", use_container_width=True)
+                st.subheader(hoja.get("titulo", ""))
+                st.write(f"**Instrucciones:** {hoja.get('instrucciones', '')}")
+                for i, ej in enumerate(hoja.get("ejercicios", []), 1):
+                    st.markdown(f"**{i}.** {ej}")
+                with st.expander("🔑 Ver Clave de Respuestas (Solo para el Docente)"):
+                    for i, resp in enumerate(hoja.get("clave_docente", []), 1):
+                        st.write(f"**{i}.** {resp}")
+            except Exception as e:
+                st.error(f"❌ {e}")
+
+elif herramienta == "🎨 Generador de Imágenes Educativas":
+    st.header("🎨 Generador de Recursos Visuales e Ilustraciones para el Aula")
+
+    col_est, col_desc = st.columns([1, 2])
+    with col_est:
+        estilo_img = st.selectbox(
+            "Estilo del recurso visual:",
+            [
+                "Ilustración libro de texto",
+                "Dibujo para colorear (Blanco y negro)",
+                "Esquema / Mapa visual de Ciencias",
+                "Contexto Cultural de Guatemala"
+            ]
+        )
+    with col_desc:
+        desc_img = st.text_area(
+            "¿Qué imagen necesitas para tu clase?",
+            placeholder="Ej. Las partes de la planta, El ciclo del agua con volcanes de Guatemala, Un quetzal en el bosque nuboso...",
+            height=100
+        )
+
+    if st.button("🎨 GENERAR ILUSTRACIÓN EDUCATIVA", type="primary", use_container_width=True):
+        if not desc_img.strip():
+            st.warning("Por favor describe qué imagen deseas crear.")
+        else:
+            with st.spinner("🖌️ Creando recurso visual educativo..."):
+                img_bytes = generar_imagen_educativa(api_key, desc_img, estilo_img)
+                if img_bytes:
+                    st.image(img_bytes, caption=f"{desc_img} ({estilo_img})", use_container_width=True)
+                    st.download_button(
+                        "📥 DESCARGAR IMAGEN (.PNG)",
+                        data=img_bytes,
+                        file_name="Recurso_Visual_ProfeIA.png",
+                        mime="image/png",
+                        type="primary",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("⚠️ Tu clave API gratuita tiene restringida la generación directa de imágenes, pero aquí tienes la guía para dibujarlo fácil en el pizarrón:")
+                    try:
+                        guia_dibujo = llamar_gemini_texto(api_key, f"Describe paso a paso y con formas geométricas sencillas cómo un docente puede dibujar en el pizarrón: {desc_img}")
+                        st.info(guia_dibujo)
+                    except Exception as e:
+                        st.error(f"❌ {e}")
+
+elif herramienta == "💬 Chat con Asistente Pedagógico":
+    st.header("💬 Chat con tu Asistente Pedagógico CNB")
+    if "mensajes_chat" not in st.session_state:
+        st.session_state.mensajes_chat = [{"role": "assistant", "content": f"¡Hola Profe {nombre_saludo}! Soy tu asistente pedagógico especializado en el CNB de Guatemala. ¿En qué te ayudo hoy?"}]
+    for msg in st.session_state.mensajes_chat:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    pregunta = st.chat_input("Escribe tu consulta pedagógica aquí...")
+    if pregunta:
+        st.session_state.mensajes_chat.append({"role": "user", "content": pregunta})
+        with st.chat_message("user"):
+            st.write(pregunta)
+        with st.chat_message("assistant"):
+            with st.spinner("Pensando..."):
+                respuesta = llamar_gemini_texto(api_key, f"Eres un asesor pedagógico experto en el CNB de Guatemala (MINEDUC). Responde de forma práctica y aplicable.\n\nConsulta: {pregunta}")
+                st.write(respuesta)
+                st.session_state.mensajes_chat.append({"role": "assistant", "content": respuesta})
