@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import urllib.parse
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
@@ -189,41 +190,53 @@ def llamar_gemini_texto(key, prompt):
     raise RuntimeError("No se pudo obtener respuesta del asistente en este momento.")
 
 def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro de texto"):
-    if not key:
-        return None
-    client = genai.Client(api_key=key)
-
-    estilos_prompt = {
-        "Ilustración libro de texto": "Ilustración educativa limpia, colores vivos, estilo libro de texto escolar moderno, sin texto borroso.",
-        "Dibujo para colorear (Blanco y negro)": "Dibujo lineal en blanco y negro (line art) para imprimir y colorear por niños, fondo blanco puro, líneas gruesas y claras, sin sombras grises.",
-        "Esquema / Mapa visual de Ciencias": "Diagrama educativo claro y didáctico estilo infografía escolar, fondo limpio, fácil de entender para estudiantes.",
-        "Contexto Cultural de Guatemala": "Ilustración educativa ambientada en Guatemala (paisajes, trajes típicos, flora o fauna local), estilo amigable para estudiantes."
+    estilos_en = {
+        "Ilustración libro de texto": "clean educational textbook illustration, bright colors, simple and clear for students, white background, no blurry text",
+        "Dibujo para colorear (Blanco y negro)": "black and white coloring book page line art for kids, pure white background, thick clean black outlines, no gray shading",
+        "Esquema / Mapa visual de Ciencias": "clean scientific educational diagram illustration, clear visual components, white background, school poster style",
+        "Contexto Cultural de Guatemala": "educational illustration set in Guatemala with local landscapes and culture, friendly schoolbook style, bright colors"
     }
+    detalle_en = estilos_en.get(estilo, estilos_en["Ilustración libro de texto"])
 
-    detalle_estilo = estilos_prompt.get(estilo, estilos_prompt["Ilustración libro de texto"])
-    prompt_img = f"Crea una imagen educativa sobre: {descripcion_imagen}. {detalle_estilo}"
+    # 1. Traducir descripción al inglés con Gemini para máxima precisión visual
+    desc_en = descripcion_imagen
+    if key:
+        try:
+            desc_en = llamar_gemini_texto(
+                key,
+                f"Translate this school illustration description into a concise English image prompt (max 25 words, no extra text): {descripcion_imagen}"
+            ).strip()
+        except Exception:
+            pass
 
+    prompt_final = f"{desc_en}, {detalle_en}"
+
+    # 2. Intentar primero con API nativa de Google (si la cuenta tiene facturación activa)
+    if key:
+        client = genai.Client(api_key=key)
+        try:
+            res = client.models.generate_content(
+                model="gemini-2.5-flash-image",
+                contents=prompt_final,
+                config=types.GenerateContentConfig(response_modalities=["IMAGE"])
+            )
+            for part in res.candidates[0].content.parts:
+                if part.inline_data:
+                    return part.inline_data.data
+        except Exception:
+            pass
+
+    # 3. Generador gratuito sin restricciones (Pollinations AI)
     try:
-        res = client.models.generate_content(
-            model="gemini-2.5-flash-image",
-            contents=prompt_img,
-            config=types.GenerateContentConfig(response_modalities=["IMAGE"])
-        )
-        for part in res.candidates[0].content.parts:
-            if part.inline_data:
-                return part.inline_data.data
+        prompt_codificado = urllib.parse.quote(prompt_final)
+        url_img = f"https://image.pollinations.ai/prompt/{prompt_codificado}?width=1024&height=768&nologo=true&seed={int(time.time())}"
+        resp = requests.get(url_img, timeout=25)
+        if resp.status_code == 200 and len(resp.content) > 5000:
+            return resp.content
     except Exception:
         pass
 
-    try:
-        res = client.models.generate_images(
-            model="imagen-3.0-generate-002",
-            prompt=prompt_img,
-            config=types.GenerateImagesConfig(number_of_images=1, aspect_ratio="4:3")
-        )
-        return res.generated_images[0].image.image_bytes
-    except Exception:
-        return None
+    return None
 
 # ==============================================================================
 # 6. GENERADORES DE DOCUMENTOS WORD (.DOCX)
