@@ -149,21 +149,28 @@ def buscar_en_cnb_vivo(grado, area, tema):
         return []
 
 # ==============================================================================
-# 5. MOTOR DE IA CON CACHÉ DE MODELOS (EVITA RETRASOS EN TELÉFONOS)
+# 5. MOTOR DE IA CON DESCUBRIMIENTO REAL DE MODELOS ACTIVOS
 # ==============================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def obtener_modelos_activos(key):
-    modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.8-pro"]
+    preferidos = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
+    disponibles = []
     try:
         client = genai.Client(api_key=key)
         for m in client.models.list():
             n = m.name.replace("models/", "")
-            if "gemini" in n and ("flash" in n or "pro" in n) and n not in modelos:
-                if not any(x in n for x in ["embedding", "vision", "image", "audio", "tts", "2.0", "2.5"]):
-                    modelos.append(n)
+            acciones = getattr(m, "supported_generation_methods", None) or getattr(m, "supported_actions", None) or []
+            if "gemini" in n and not any(x in n for x in ["embedding", "vision", "image", "audio", "tts", "aqa", "bisheng"]):
+                if not acciones or "generateContent" in acciones:
+                    disponibles.append(n)
     except Exception:
         pass
-    return modelos
+
+    ordenados = [m for m in preferidos if m in disponibles]
+    for m in disponibles:
+        if m not in ordenados and ("flash" in m or "pro" in m):
+            ordenados.append(m)
+    return ordenados if ordenados else preferidos
 
 def llamar_gemini_json(key, prompt):
     if not key:
@@ -187,12 +194,13 @@ def llamar_gemini_texto(key, prompt):
     if not key:
         raise RuntimeError("Falta configurar GEMINI_API_KEY en los Secrets de Streamlit Cloud.")
     client = genai.Client(api_key=key)
+    ultimo_error = ""
     for mod in obtener_modelos_activos(key)[:4]:
         try:
             return client.models.generate_content(model=mod, contents=prompt).text
-        except Exception:
-            pass
-    raise RuntimeError("No se pudo obtener respuesta del asistente en este momento.")
+        except Exception as e:
+            ultimo_error = str(e)
+    raise RuntimeError(f"Error de conexión IA: {ultimo_error}")
 
 def generar_imagen_educativa(key, descripcion_imagen, estilo="Ilustración libro de texto"):
     estilos_en = {
